@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-Y5WX5YT5KE"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag() { dataLayer.push(arguments); }
+        gtag('js', new Date());
+
+        gtag('config', 'G-Y5WX5YT5KE');
+    </script>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <style>
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 40px;
+            height: 20px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            -webkit-transition: .4s;
+            transition: .4s;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 4px;
+            bottom: 2px;
+            background-color: white;
+            -webkit-transition: .4s;
+            transition: .4s;
+        }
+
+        input:checked+.slider {
+            background-color: #2196F3;
+        }
+
+        input:focus+.slider {
+            box-shadow: 0 0 1px #2196F3;
+        }
+
+        input:checked+.slider:before {
+            -webkit-transform: translateX(16px);
+            -ms-transform: translateX(16px);
+            transform: translateX(16px);
+        }
+
+        /* Rounded sliders */
+        .slider.round {
+            border-radius: 34px;
+        }
+
+        .slider.round:before {
+            border-radius: 50%;
+        }
+
+        .split {
+            float: left;
+            min-width: 300px;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>Google AI聲音辨識模型測試</h2>
+    <div class="split">
+        <!-- <div id="webcam-container"></div> -->
+        <div id="label-container"></div>
+        <h2 id="result"></h2>
+    </div>
+    <div class="split">
+        模型 URL：<input type="url" id="myURL" size="32" /> <br>
+        門檻值：<output>90</output>%<input id="threshold" type="range" min="0" max="100" value="90"
+            oninput="this.previousElementSibling.value = this.value"><br>
+        <hr>
+        IFTTT - Webhook<br>
+        Key：<input type="text" id="whToken" size="32" /> <br>
+        Event：<input type="text" id="whEvent" size="32" /> <br>
+        事件連發限制：<output>1000</output> ms <input id="whLimit" step="100" type="range" min="100" max="10000" value="1000"
+            oninput="this.previousElementSibling.value = this.value"><br>
+        value1：<input type="text" id="whV1" size="32" disabled /> <br>
+        value2：<input type="text" id="whV2" size="32" /> <br>
+        value3：<input type="text" id="whV3" size="32" /> <br>
+        發送事件：
+        <label class="switch">
+            <input type="checkbox" id="whSend" onchange="checkSetting();">
+            <span class="slider round"></span>
+        </label>
+        <button type="button" onclick="init()">啟動辨識</button>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/@tensorflow-models/speech-commands@0.4.0/dist/speech-commands.min.js"></script>
+    <script type="text/javascript">
+        // more documentation available at
+        // https://github.com/tensorflow/tfjs-models/tree/master/speech-commands
+        var URL = "";
+        let model, webcam, labelContainer, maxPredictions;
+        var lastName = "";
+        var counter;
+        var swSend = false;
+
+        setInterval(countTime, 100);
+        function countTime() {
+            if (swSend) {
+                counter -= 100;
+                if (counter <= 0) {
+                    swSend = false;
+                    counter = parseInt(document.getElementById("whLimit").value);
+                }
+            }
+        }
+
+        async function createModel() {
+            URL = document.getElementById("myURL").value;
+            const checkpointURL = URL + 'model.json'; // model topology
+            const metadataURL = URL + 'metadata.json'; // model metadata
+
+            const recognizer = speechCommands.create(
+                'BROWSER_FFT', // fourier transform type, not useful to change
+                undefined, // speech commands vocabulary feature, not useful for your models
+                checkpointURL,
+                metadataURL);
+
+            // check that model and metadata are loaded via HTTPS requests.
+            await recognizer.ensureModelLoaded();
+
+            return recognizer;
+        }
+
+        async function init() {
+            counter = parseInt(document.getElementById("whLimit").value);
+            const recognizer = await createModel();
+            const classLabels = recognizer.wordLabels(); // get class labels
+            const labelContainer = document.getElementById('label-container');
+            for (let i = 0; i < classLabels.length; i++) {
+                labelContainer.appendChild(document.createElement('div'));
+            }
+            // listen() takes two arguments:
+            // 1. A callback function that is invoked anytime a word is recognized.
+            // 2. A configuration object with adjustable fields
+            recognizer.listen(result => {
+                var threshold = parseInt(document.getElementById("threshold").value) / 100;
+                const scores = result.scores; // probability of prediction for each class
+                for (let i = 0; i < classLabels.length; i++) {
+                    const classPrediction = classLabels[i] + ': ' + scores[i].toFixed(2);
+                    labelContainer.childNodes[i].innerHTML = classPrediction;
+                    if (scores[i].toFixed(2) >= threshold) {
+                        document.getElementById("result").innerHTML = classLabels[i];
+                        document.getElementById("whV1").value = classLabels[i];
+                        if (lastName != classLabels[i]) {
+                            if (!swSend && document.getElementById("whSend").checked) {
+                                swSend = true;
+                                sendHook(classLabels[i]);
+                            }
+                        }
+                        lastName = classLabels[i];
+                    }
+                }
+            }, {
+                includeSpectrogram: true, // in case listen should return result.spectrogram
+                probabilityThreshold: 0.75,
+                invokeCallbackOnNoiseAndUnknown: true,
+                overlapFactor: 0.50 // probably want between 0.5 and 0.75. More info in README
+            });
+
+            // Stop the recognition in 5 seconds.
+            // setTimeout(() => recognizer.stopListening(), 5000);
+        }
+
+
+        function sendHook(cName) {
+            var whURL = "https://maker.ifttt.com/trigger/";
+            whURL += document.getElementById("whEvent").value;
+            whURL += "/with/key/" + document.getElementById("whToken").value;
+
+            var data = "";
+            data += '"value1" : "' + cName + '"';
+            // if(document.getElementById("whV1").value != "") {
+            //     data += '"value1" : "' + document.getElementById("whV1").value + '"';
+            // }
+            if (document.getElementById("whV2").value != "") {
+                if (data != "")
+                    data += ",";
+                data += '"value2" : "' + document.getElementById("whV2").value + '"';
+            }
+            if (document.getElementById("whV3").value != "") {
+                if (data != "")
+                    data += ",";
+                data += '"value3" : "' + document.getElementById("whV3").value + '"';
+            }
+            if (data != "")
+                data = "{ " + data + " }";
+
+            // var data = "client_secret=sk_test_f7PKXx5NRBFG5r41nTrPT7qB&code=%22%7BAUTHORIZATION_CODE%7D%22&grant_type=authorization_code";
+            // whURL += "?value1=1234";
+            $.ajax({
+                type: "POST",
+                url: whURL,
+                // jsonp: "callback",
+                data: JSON.parse(data),
+                dataType: "jsonp",
+                contentType: "application/json; charset=utf-8",
+                success: function (json) {
+                    console.log(json);
+                },
+                error: function (error) {
+                    console.log(error);
+                    // alert('fail');
+                }
+            });
+            return;
+            var xhr = new XMLHttpRequest();
+            xhr.withCredentials = "true";
+            xhr.responseType = 'json';
+            xhr.addEventListener("readystatechange", function () {
+                if (this.readyState === 4) {
+                    console.log(this.response);
+                    if (!(this.response === null)) {
+                        console.log("錯誤！" + this.response.errors[0].message);
+                        if (this.response.errors[0].message.indexOf("invalid key") >= 0) {
+                            document.getElementById("whSend").checked = false;
+                            alert("Key 有問題！");
+                        }
+                    } else {
+                        console.log("發送成功！");
+                    }
+                }
+            });
+
+            xhr.open("POST", whURL);
+            xhr.setRequestHeader("content-type", "application/json");
+            xhr.setRequestHeader('Access-Control-Allow-Origin', '*');
+            xhr.setRequestHeader("cache-control", "no-cache");
+            console.log(xhr);
+            xhr.send(data);
+
+            // $.ajax({
+            //     method: "POST",
+            //     url: whURL,
+            //     data: data
+            //     })
+            //     .done(function( msg ) {
+            //         alert( "發送事件: " + msg );
+            //     });
+        }
+
+        function checkSetting() {
+            if (document.getElementById("whSend").checked) {
+                if (document.getElementById("whToken").value == "") {
+                    document.getElementById("whSend").checked = false;
+                    alert("請先設定好「Key」！");
+                }
+                if (document.getElementById("whEvent").value == "") {
+                    document.getElementById("whSend").checked = false;
+                    alert("請先設定好「事件」！");
+                }
+            }
+        }
+    </script>
+
+</body>
+
+</html>
